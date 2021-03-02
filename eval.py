@@ -19,7 +19,7 @@ import cv2
 from plyfile import PlyData, PlyElement
 from PIL import Image
 
-cudnn.benchmark = True
+#cudnn.benchmark = True
 
 parser = argparse.ArgumentParser(description='Predict depth, filter, and fuse. May be different from the original implementation')
 parser.add_argument('--model', default='mvsnet', help='select model')
@@ -96,7 +96,7 @@ def save_depth():
     # dataset, dataloader
     MVSDataset = find_dataset_def(args.dataset)
     test_dataset = MVSDataset(args.testpath, args.testlist, "test", 3, args.numdepth, args.interval_scale)
-    TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=4, drop_last=False)
+    TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=0, drop_last=False)
 
     # model
     model = MVSNet(refine=False)

@@ -166,12 +166,16 @@ class CostRegNet(nn.Module):
         self.prob = nn.Conv3d(8, 1, 3, stride=1, padding=1)
 
     def forward(self, x):
+       # print(x.shape)
         conv0 = self.conv0(x)
         conv2 = self.conv2(self.conv1(conv0))
         conv4 = self.conv4(self.conv3(conv2))
         x = self.conv6(self.conv5(conv4))
-        #print(conv4.shape)
-        #print(self.conv7(x).shape)
+        # print("=====conv4=====")
+        # print(conv4.shape)
+        # print(x.shape)
+        # print("=====conv7======")
+        # print(self.conv7(x).shape)
 
         x = conv4 + self.conv7(x)
         x = conv2 + self.conv9(x)
@@ -180,7 +184,10 @@ class CostRegNet(nn.Module):
         torch.cuda.memory_allocated()
         torch.cuda.memory_cached()
         torch.cuda.empty_cache()
-
+        
+        # print(conv0.shape)
+        # print(self.conv11(x).shape)
+        # print(x.shape)
         x = conv0 + self.conv11(x)
         x = self.prob(x)
         return x
@@ -212,6 +219,7 @@ class MVSNet(nn.Module):
             self.refine_network = RefineNet()
 
     def forward(self, imgs, proj_matrices, depth_values):
+        #print(depth_values.shape)
         imgs = torch.unbind(imgs, 1)
         proj_matrices = torch.unbind(proj_matrices, 1)
         assert len(imgs) == len(proj_matrices), "Different number of images and projection matrices"
@@ -243,8 +251,8 @@ class MVSNet(nn.Module):
                 volume_sq_sum = volume_sq_sum + warped_volume ** 2
             else:
                 # TODO: this is only a temporal solution to save memory, better way?
-                volume_sum += warped_volume
-                volume_sq_sum += warped_volume.pow_(2)  # the memory of warped_volume has been modified
+                volume_sum = volume_sum + warped_volume
+                volume_sq_sum = volume_sq_sum + warped_volume.pow_(2)  # the memory of warped_volume has been modified
             del warped_volume
         del src_features
         torch.cuda.memory_allocated()
@@ -254,6 +262,7 @@ class MVSNet(nn.Module):
         volume_variance = volume_sq_sum.div_(num_views).sub_(volume_sum.div_(num_views).pow_(2))
 
         # step 3. cost volume regularization
+        #print(volume_variance.shape)
         cost_reg = self.cost_regularization(volume_variance)
         #cost_reg = self.unet3d(volume_variance)
         # cost_reg = F.upsample(cost_reg, [num_depth * 4, img_height, img_width], mode='trilinear')
@@ -316,14 +325,16 @@ def project_with_depth(depth_ref, intrinsics_ref, extrinsics_ref, intrinsics_src
     xyz_src = torch.matmul(torch.matmul(extrinsics_src,torch.inverse(extrinsics_ref)),
                         torch.cat((xyz_ref, torch.ones_like(x_ref.unsqueeze(0)).repeat(batchsize,1,1)),dim=1))[:,:3,:]
     #print(xyz_src.shape)  B*3*20480
-    
-    K_xyz_src = torch.matmul(intrinsics_src, xyz_src) #B*3*20480
-    xy_src = K_xyz_src[:,:2,:] / K_xyz_src[:,2:3,:]
-    x_src = xy_src[:,0,:].view([batchsize,height, width])
-    y_src = xy_src[:,1,:].view([batchsize,height, width])
+    intrinsics_src_ = intrinsics_src.clone()
+    K_xyz_src = torch.matmul(intrinsics_src_, xyz_src) #B*3*20480
+    xy_src = K_xyz_src[:,:2,:].clone() / K_xyz_src[:,2:3,:].clone()
+    x_src = xy_src[:,0,:].clone().view([batchsize,height, width])
+    y_src = xy_src[:,1,:].clone().view([batchsize,height, width])
     #print(x_src.shape) #B*128*160
-
+   # print(type(x_src))
+   # return torch.zeros_like(x_src), torch.zeros_like(y_src)
     return x_src,y_src
+    
 
 def gradient_x(img):
     return img[:, :, :-1, :] - img[:, :, 1:, :]
@@ -449,9 +460,7 @@ def compute_normal_by_depth(depth_est, ref_intrinsics,nei):
     normals2 = F.normalize(torch.cross(diff_x0y1, diff_x0y0)) #* tf.tile(normals2_mask[:, None], [1,3])
     normals3 = F.normalize(torch.cross(diff_x1y0, diff_x1y1)) #* tf.tile(normals3_mask[:, None], [1,3])
     
-    normal_vector = normals0+normals1+normals2+normals3
-    #normal_vector = tf.reduce_sum(tf.concat([[normals0], [normals1], [normals2], [normals3]], 0),0)
-    #normal_vector = F.normalize(normals0)
+    normal_vector = normals0+normals1+normals2+normals3wujb120210302569771
     normal_vector = F.normalize(normal_vector)
     #normal_map = tf.reshape(tf.squeeze(normal_vector), [kitti_shape[0]]+[kitti_shape[1]-2*nei]+[kitti_shape[2]-2*nei]+[3])
     normal_map = normal_vector.view(batchsize,height-2*nei,width-2*nei,3)
@@ -905,9 +914,9 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
     loss_normal=0
     
     if F.smooth_l1_loss(depth_by_normal,depth_est_1).nelement()==0:
-        loss_normal+=torch.tensor(0.)
+        loss_normal = loss_normal + torch.tensor(0.)
     else:
-        loss_normal+=F.smooth_l1_loss(depth_by_normal,depth_est_1)
+        loss_normal = loss_normal + F.smooth_l1_loss(depth_by_normal,depth_est_1)
 
     depth_est=depth_est_1
     #depth_est=depth_by_normal
@@ -934,7 +943,7 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
     weight_y=torch.exp(-torch.mean(torch.abs(ref_color_dy),1))
     smooth_x=depth_dx*weight_x
     smooth_y=depth_dy*weight_y
-    loss_s+=torch.mean(torch.abs(smooth_x))+torch.mean(torch.abs(smooth_y))
+    loss_s = loss_s + torch.mean(torch.abs(smooth_x))+torch.mean(torch.abs(smooth_y))
 
     ref_color_d2x=gradient_x(ref_color_dx)
     ref_color_d2y=gradient_y(ref_color_dy)
@@ -947,7 +956,7 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
     smooth_x2=depth_d2x*weight_x2
     smooth_y2=depth_d2y*weight_y2
 
-    loss_s+=torch.mean(torch.abs(smooth_x2))+torch.mean(torch.abs(smooth_y2))
+    loss_s = loss_s + torch.mean(torch.abs(smooth_x2))+torch.mean(torch.abs(smooth_y2))
 
     #loss_photo & loss_perceptual
     #print(depth_est.shape)#B*128*160
@@ -961,10 +970,7 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
         x_src,y_src=project_with_depth(depth_est, ref_intrinsics, ref_extrinsics, src_intrinsics[i], src_extrinsics[i])
         src_color=src_img[i][:,:, 1::4, 1::4]
         grid=torch.stack((x_src.view(batchsize,-1)/((width - 1) / 2) - 1,y_src.view(batchsize,-1)/((height - 1) / 2) - 1),2).unsqueeze(0)
-        
-        # #print(grid.shape) 1*1*20480*2
-
-        #print(src_vgg_feature[i][0].shape) #4*256*128*160  
+        wujb120210302569771
         ##------------------------------------------------##
         #因为每一层卷积后面跟着relu,所以所有的值都是大于等于0的
 
@@ -1037,9 +1043,9 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
             #print(len(ref_vgg_feature))
 
         if F.smooth_l1_loss(ref_vgg_feature[0][mask_perpectual],sampled_feature_src[mask_perpectual]).nelement()==0:
-            loss_perceptual+=torch.tensor(0.)
+            loss_perceptual = loss_perceptual + torch.tensor(0.)
         else:
-            loss_perceptual+=F.smooth_l1_loss(ref_vgg_feature[0][mask_perpectual],sampled_feature_src[mask_perpectual])*0.2
+            loss_perceptual = loss_perceptual + F.smooth_l1_loss(ref_vgg_feature[0][mask_perpectual],sampled_feature_src[mask_perpectual])*0.2
 
 
         #15
@@ -1055,9 +1061,9 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
             #print(len(ref_vgg_feature))
 
         if F.smooth_l1_loss(ref_vgg_feature[1][mask_perpectual],sampled_feature_src[mask_perpectual]).nelement()==0:
-            loss_perceptual+=torch.tensor(0.)
+            loss_perceptual = loss_perceptual + torch.tensor(0.)
         else:
-            loss_perceptual+=F.smooth_l1_loss(ref_vgg_feature[1][mask_perpectual],sampled_feature_src[mask_perpectual])*0.8
+            loss_perceptual = loss_perceptual + F.smooth_l1_loss(ref_vgg_feature[1][mask_perpectual],sampled_feature_src[mask_perpectual])*0.8
 
         #22
         height_perceptual=int(height/2)
@@ -1086,9 +1092,9 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
             #print(len(ref_vgg_feature))
 
         if F.smooth_l1_loss(ref_vgg_feature[2][mask_perpectual],sampled_feature_src[mask_perpectual]).nelement()==0:
-            loss_perceptual+=torch.tensor(0.)
+            loss_perceptual= loss_perceptual + torch.tensor(0.)
         else:
-            loss_perceptual+=F.smooth_l1_loss(ref_vgg_feature[2][mask_perpectual],sampled_feature_src[mask_perpectual])*0.4
+            loss_perceptual = loss_perceptual + F.smooth_l1_loss(ref_vgg_feature[2][mask_perpectual],sampled_feature_src[mask_perpectual])*0.4
 
 
         #29
@@ -1139,9 +1145,9 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
         #loss=F.smooth_l1_loss(ref_color[mask],sampled_img_src[mask])
         #print("loss_u_shape:{}".format(loss.shape)) size：单
         if F.smooth_l1_loss(ref_color[mask],sampled_img_src[mask]).nelement()==0:
-            loss_photo+=torch.tensor(0.)
+            loss_photo = loss_photo + torch.tensor(0.)
         else:
-            loss_photo+=F.smooth_l1_loss(ref_color[mask],sampled_img_src[mask])
+            loss_photo = loss_photo + F.smooth_l1_loss(ref_color[mask],sampled_img_src[mask])
 
         #计算梯度
         sampled_img_src_dx=gradient_x(sampled_img_src)
@@ -1150,14 +1156,14 @@ def mvsnet_loss(depth_est_1,intrinsics,extrinsics,imgs,mask_photometric,outputs_
         smooth_y=torch.abs(ref_color_dy-sampled_img_src_dy)
 
         if smooth_x[mask[:,:,:-1,:]].nelement()==0 or smooth_y[mask[:,:,:,:-1]].nelement()==0:
-            loss_photo+=torch.tensor(0.)
+            loss_photo = loss_photo + torch.tensor(0.)
         else:
-            loss_photo+=torch.mean(smooth_x[mask[:,:,:-1,:]])+torch.mean(smooth_y[mask[:,:,:,:-1]])
+            loss_photo = loss_photo + torch.mean(smooth_x[mask[:,:,:-1,:]])+torch.mean(smooth_y[mask[:,:,:,:-1]])
 
         if ref_color[mask].nelement()==0:
-            loss_ssim+=torch.tensor(0.)
+            loss_ssim = loss_ssim + torch.tensor(0.)
         else:
-            loss_ssim+=(1-ssim(ref_color[mask].unsqueeze(0).unsqueeze(0).unsqueeze(0), sampled_img_src[mask].unsqueeze(0).unsqueeze(0).unsqueeze(0)))
+            loss_ssim = loss_ssim + (1-ssim(ref_color[mask].unsqueeze(0).unsqueeze(0).unsqueeze(0), sampled_img_src[mask].unsqueeze(0).unsqueeze(0).unsqueeze(0)))
     #loss_sum=0.0067*loss_s+0.8*loss_photo+0.2*loss_ssim+loss_perceptual
     loss_sum = 0.8 * loss_photo+0.2*loss_ssim+0.0067*loss_s+loss_perceptual
     #print(mask)

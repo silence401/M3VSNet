@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #DTU_TESTING="./dtu/"
-DTU_TESTING="/data/mvsnet/dtu_point/"
+DTU_TESTING="/home/silence401/下载/dataset/eth3d"
 #DTU_TESTING="/data/mvsnet/TT/intermediate/"
 #CKPT_FILE="./checkpoint/model_000008.ckpt"
 #model_000008.ckpt normal model_00000.ckpt no_normal

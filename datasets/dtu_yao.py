@@ -103,6 +103,8 @@ class MVSDataset(Dataset):
             if i == 0:  # reference view
                 depth_values = np.arange(depth_min, depth_interval * self.ndepths + depth_min, depth_interval,
                                          dtype=np.float32)
+                print(depth_min+self.ndepths*depth_interval)
+                print(depth_values)
                # mask = self.read_img(mask_filename)
                 depth = self.read_depth(depth_filename)
                 mask = np.array((depth > depth_min+depth_interval) & (depth < depth_min+(self.ndepths-2)*depth_interval), dtype=np.float32)

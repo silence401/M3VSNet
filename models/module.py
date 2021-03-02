@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 
 
 class ConvBnReLU(nn.Module):
@@ -104,6 +105,12 @@ def homo_warping(src_fea, src_proj, ref_proj, depth_values):
     height, width = src_fea.shape[2], src_fea.shape[3]
 
     with torch.no_grad():
+        # print("==============")
+        # print(src_proj)
+        # print(ref_proj)
+        # print("heihei")
+        # #print(torch.inverse(ref_proj))
+        # print(np.matmul(src_proj.cpu(), np.linalg.inv(ref_proj.cpu())))
         proj = torch.matmul(src_proj, torch.inverse(ref_proj))
         rot = proj[:, :3, :3]  # [B,3,3]
         trans = proj[:, :3, 3:4]  # [B,3,1]

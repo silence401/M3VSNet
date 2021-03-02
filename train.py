@@ -12,6 +12,7 @@ import numpy as np
 import time
 from tensorboardX import SummaryWriter
 from datasets import find_dataset_def
+from datasets.pcl import PCLDataset
 from models import *
 from utils import *
 import gc
@@ -21,8 +22,8 @@ from torchvision import models
 from torchvision import utils as vutils
 from torchvision import transforms
 
-cudnn.benchmark = True
-
+#cudnn.benchmark = True
+#torch.autograd.set_detect_anomaly(True)
 parser = argparse.ArgumentParser(description='A PyTorch Implementation of MVSNet')
 parser.add_argument('--mode', default='train', help='train or test', choices=['train', 'test', 'profile'])
 parser.add_argument('--model', default='mvsnet', help='select model')
@@ -38,7 +39,7 @@ parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
 parser.add_argument('--lrepochs', type=str, default="1,3,5,7:2", help='epoch ids to downscale lr and the downscale rate')
 parser.add_argument('--wd', type=float, default=0.0, help='weight decay')
 
-parser.add_argument('--batch_size', type=int, default=12, help='train batch size')
+parser.add_argument('--batch_size', type=int, default=1, help='train batch size')
 parser.add_argument('--numdepth', type=int, default=192, help='the number of depth values')
 parser.add_argument('--interval_scale', type=float, default=1.06, help='the number of depth values')
 
@@ -76,10 +77,11 @@ print("argv:", sys.argv[1:])
 print_args(args)
 
 # dataset, dataloader
-MVSDataset = find_dataset_def(args.dataset)
-train_dataset = MVSDataset(args.trainpath, args.trainlist, "train", 3, args.numdepth, args.interval_scale)
+#MVSDataset = find_dataset_def(args.dataset)
+MVSDataset = PCLDataset
+train_dataset = MVSDataset(args.trainpath, args.trainlist, "train", 5, args.numdepth, args.interval_scale)
 test_dataset = MVSDataset(args.testpath, args.testlist, "test", 5, args.numdepth, args.interval_scale)
-TrainImgLoader = DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=8, drop_last=True)
+TrainImgLoader = DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=0, drop_last=True)
 TestImgLoader = DataLoader(test_dataset, args.batch_size, shuffle=False, num_workers=4, drop_last=False)
 
 # class vggNet(nn.Module):
@@ -143,6 +145,7 @@ def train():
 
         #training
         for batch_idx, sample in enumerate(TrainImgLoader):
+         #   print(sample)
             start_time = time.time()
             global_step = len(TrainImgLoader) * epoch_idx + batch_idx
             do_summary = global_step % args.summary_freq == 0
@@ -159,31 +162,32 @@ def train():
                                                                                      len(TrainImgLoader), loss,
                                                                                      time.time() - start_time,global_step))
 
-        # checkpoint
+        #checkpoint
         if (epoch_idx + 1) % args.save_freq == 0:
+            print("save model successed!")
             torch.save({
                 'epoch': epoch_idx,
                 'model': model.state_dict(),
                 'optimizer': optimizer.state_dict()},
                 "{}/model_{:0>6}.ckpt".format(args.logdir, epoch_idx))
 
-        # testing
-        avg_test_scalars = DictAverageMeter()
-        for batch_idx, sample in enumerate(TestImgLoader):
-            start_time = time.time()
-            global_step = len(TrainImgLoader) * epoch_idx + batch_idx
-            do_summary = global_step % args.summary_freq == 0
-            loss, scalar_outputs, image_outputs = test_sample(sample, detailed_summary=do_summary)
-            if do_summary:
-                save_scalars(logger, 'test', scalar_outputs, global_step)
-                save_images(logger, 'test', image_outputs, global_step)
-            avg_test_scalars.update(scalar_outputs)
-            del scalar_outputs, image_outputs
-            print('Epoch {}/{}, Iter {}/{}, test loss = {:.3f}, time = {:3f}'.format(epoch_idx, args.epochs, batch_idx,
-                                                                                     len(TestImgLoader), loss,
-                                                                                     time.time() - start_time))
-        save_scalars(logger, 'fulltest', avg_test_scalars.mean(), global_step)
-        print("avg_test_scalars:", avg_test_scalars.mean())
+        # # testing
+        # avg_test_scalars = DictAverageMeter()
+        # for batch_idx, sample in enumerate(TestImgLoader):
+        #     start_time = time.time()
+        #     global_step = len(TrainImgLoader) * epoch_idx + batch_idx
+        #     do_summary = global_step % args.summary_freq == 0
+        #     loss, scalar_outputs, image_outputs = test_sample(sample, detailed_summary=do_summary)
+        #     if do_summary:
+        #         save_scalars(logger, 'test', scalar_outputs, global_step)
+        #         save_images(logger, 'test', image_outputs, global_step)
+        #     avg_test_scalars.update(scalar_outputs)
+        #     del scalar_outputs, image_outputs
+        #     print('Epoch {}/{}, Iter {}/{}, test loss = {:.3f}, time = {:3f}'.format(epoch_idx, args.epochs, batch_idx,
+        #                                                                              len(TestImgLoader), loss,
+        #                                                                              time.time() - start_time))
+        # save_scalars(logger, 'fulltest', avg_test_scalars.mean(), global_step)
+        # print("avg_test_scalars:", avg_test_scalars.mean())
         # gc.collect()
 
 
@@ -214,6 +218,7 @@ def train_sample(sample, detailed_summary=False):
 
     #print(sample_cuda["imgs"].shape) 
     print("Begin forward")
+    print(sample_cuda["depth_values"].shape)
     outputs = model(sample_cuda["imgs"], sample_cuda["proj_matrices"], sample_cuda["depth_values"])
     depth_est = outputs["depth"]
     photometric_confidence = outputs["photometric_confidence"]
@@ -250,7 +255,8 @@ def train_sample(sample, detailed_summary=False):
     #depth_est=depth_est.squeeze(1)
 
     mask_photometric=photometric_confidence>0.5 #unit8
-
+    mask_gt = mask_photometric.float()
+   # print(mask_gt.shape)
     mask_final = mask_gt*mask_photometric.float()
 
     #print(mask_final)
@@ -289,18 +295,20 @@ def train_sample(sample, detailed_summary=False):
                      }
                      #"mask_calculate":mask_calculate}
     if detailed_summary:
-        image_outputs["errormap_gt"] = (depth_est - depth_gt).abs() * mask_gt
-        image_outputs["errormap_final"] = (depth_est - depth_gt).abs() * mask_final
-        image_outputs["errormap_depth_normal_final"]=error_depth_by_normal * mask_final
-        #print(depth_est.device)
-        #print(depth_gt.device)
-        #print(mask_final.device)
-        scalar_outputs["abs_depth_error"] = AbsDepthError_metrics(depth_est, depth_gt, mask_final > 0.5)
-        scalar_outputs["thres2mm_error"] = Thres_metrics(depth_est, depth_gt, mask_final > 0.5, 2)
-        scalar_outputs["thres4mm_error"] = Thres_metrics(depth_est, depth_gt, mask_final > 0.5, 4)
-        scalar_outputs["thres8mm_error"] = Thres_metrics(depth_est, depth_gt, mask_final > 0.5, 8)
+        print(mask_gt.shape)
+        print(depth_est.shape)
+    #     image_outputs["errormap_gt"] = (depth_est - depth_gt).abs() * mask_gt
+    #     image_outputs["errormap_final"] = (depth_est - depth_gt).abs() * mask_final
+    #     image_outputs["errormap_depth_normal_final"]=error_depth_by_normal * mask_final
+    #     #print(depth_est.device)
+    #     #print(depth_gt.device)
+    #     #print(mask_final.device)
+    #     scalar_outputs["abs_depth_error"] = AbsDepthError_metrics(depth_est, depth_gt, mask_final > 0.5)
+    #     scalar_outputs["thres2mm_error"] = Thres_metrics(depth_est, depth_gt, mask_final > 0.5, 2)
+    #     scalar_outputs["thres4mm_error"] = Thres_metrics(depth_est, depth_gt, mask_final > 0.5, 4)
+    #     scalar_outputs["thres8mm_error"] = Thres_metrics(depth_est, depth_gt, mask_final > 0.5, 8)
     
-    #print("loss:{}".format(loss))
+    # #print("loss:{}".format(loss))
     #print("abs:{}".format(AbsDepthError_metrics(depth_est, depth_gt, mask > 0.5)))
     #print("2:{}".format(Thres_metrics(depth_est, depth_gt, mask > 0.5, 2)))
     #print("4:{}".format(Thres_metrics(depth_est, depth_gt, mask > 0.5, 4)))
@@ -330,7 +338,8 @@ def test_sample(sample, detailed_summary=True):
     #depth_est=depth_est.squeeze(1)
 
     mask_photometric=photometric_confidence>0.5
-    mask_final=mask_gt*mask_photometric.float()
+    #mask_final=mask_gt*mask_photometric.float()
+    mask_final = mask_photometric.float()
     
 
     loss = test_loss_calculate(depth_est, depth_gt, mask_final)
